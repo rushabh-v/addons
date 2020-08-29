@@ -46,7 +46,7 @@ class MovingAverage(AveragedOptimizerWrapper):
                  optimizer: Union[tf.keras.optimizers.Optimizer, str],
                  sequential_update: bool = True,
                  average_decay: FloatTensorLike = 0.99,
-                 num_updates: Optional[str] = None,
+                 num_updates: Union[None, int, tf.Variable] = None,
                  name: str = "MovingAverage",
                  **kwargs):
         r"""Construct a new MovingAverage optimizer.
@@ -74,6 +74,10 @@ class MovingAverage(AveragedOptimizerWrapper):
         super().__init__(optimizer, sequential_update, name, **kwargs)
         self._num_updates = num_updates
         if self._num_updates is not None:
+            if isinstance(self._num_updates, tf.Variable):
+                tf.debugging.assert_integer(
+                    self._num_updates, (f'type of argument "num_updates" must be '
+                                        'int; got {self._num_updates.dtype} instead'))
             num_updates = tf.cast(
                 self._num_updates, tf.float32, name="num_updates")
             average_decay = tf.minimum(

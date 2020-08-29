@@ -88,6 +88,17 @@ class MovingAverageTest(tf.test.TestCase):
             with self.assertRaises(TypeError):
                 MovingAverage(base_opt, sequential_update, 0.5)
 
+    def test_num_updates_valid(self):
+        base_opt = 'sgd'
+        for num_updates in [1, tf.Variable(1)]:
+            MovingAverage(base_opt, num_updates = num_updates)
+
+    def test_num_updates_invalid(self):
+        base_opt = 'sgd'
+        for num_updates in [1.0, tf.Variable(1.0), 'a']:
+            with self.assertRaises(TypeError):
+                MovingAverage(base_opt, num_updates = num_updates)
+
     def test_model_weights_update(self):
         grad = tf.Variable([[0.1]])
         model = tf.keras.Sequential(
