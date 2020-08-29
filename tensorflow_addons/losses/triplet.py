@@ -16,17 +16,18 @@
 
 import tensorflow as tf
 from tensorflow_addons.losses import metric_learning
+from tensorflow_addons.utils.keras_utils import LossFunctionWrapper
 from tensorflow_addons.utils.types import FloatTensorLike, TensorLike
 from typeguard import typechecked
-from typing import Optional
+from typing import Optional, Union, Callable
 
 
 def _masked_maximum(data, mask, dim=1):
     """Computes the axis wise maximum over chosen elements.
 
     Args:
-      data: 2-D float `Tensor` of size [n, m].
-      mask: 2-D Boolean `Tensor` of size [n, m].
+      data: 2-D float `Tensor` of shape `[n, m]`.
+      mask: 2-D Boolean `Tensor` of shape `[n, m]`.
       dim: The dimension over which to compute the maximum.
 
     Returns:
@@ -47,8 +48,8 @@ def _masked_minimum(data, mask, dim=1):
     """Computes the axis wise minimum over chosen elements.
 
     Args:
-      data: 2-D float `Tensor` of size [n, m].
-      mask: 2-D Boolean `Tensor` of size [n, m].
+      data: 2-D float `Tensor` of shape `[n, m]`.
+      mask: 2-D Boolean `Tensor` of shape `[n, m]`.
       dim: The dimension over which to compute the minimum.
 
     Returns:
@@ -68,24 +69,74 @@ def _masked_minimum(data, mask, dim=1):
 @tf.keras.utils.register_keras_serializable(package="Addons")
 @tf.function
 def triplet_semihard_loss(
-    y_true: TensorLike, y_pred: TensorLike, margin: FloatTensorLike = 1.0
+    y_true: TensorLike,
+    y_pred: TensorLike,
+    margin: FloatTensorLike = 1.0,
+    distance_metric: Union[str, Callable] = "L2",
 ) -> tf.Tensor:
-    """Computes the triplet loss with semi-hard negative mining.
+    r"""Computes the triplet loss with semi-hard negative mining.
+
+    Usage:
+
+    >>> y_true = tf.convert_to_tensor([0, 0])
+    >>> y_pred = tf.convert_to_tensor([[0.0, 1.0], [1.0, 0.0]])
+    >>> tfa.losses.triplet_semihard_loss(y_true, y_pred, distance_metric="L2")
+    <tf.Tensor: shape=(), dtype=float32, numpy=2.4142137>
+
+    >>> # Calling with callable `distance_metric`
+    >>> distance_metric = lambda x: tf.linalg.matmul(x, x, transpose_b=True)
+    >>> tfa.losses.triplet_semihard_loss(y_true, y_pred, distance_metric=distance_metric)
+    <tf.Tensor: shape=(), dtype=float32, numpy=1.0>
 
     Args:
-      y_true: 1-D integer `Tensor` with shape [batch_size] of
+      y_true: 1-D integer `Tensor` with shape `[batch_size]` of
         multiclass integer labels.
       y_pred: 2-D float `Tensor` of embedding vectors. Embeddings should
         be l2 normalized.
       margin: Float, margin term in the loss definition.
+      distance_metric: `str` or a `Callable` that determines distance metric.
+        Valid strings are "L2" for l2-norm distance,
+        "squared-L2" for squared l2-norm distance,
+        and "angular" for cosine similarity.
+
+        A `Callable` should take a batch of embeddings as input and
+        return the pairwise distance matrix.
+
+    Returns:
+      triplet_loss: float scalar with dtype of `y_pred`.
     """
-    labels, embeddings = y_true, y_pred
+    labels = tf.convert_to_tensor(y_true, name="labels")
+    embeddings = tf.convert_to_tensor(y_pred, name="embeddings")
+
+    convert_to_float32 = (
+        embeddings.dtype == tf.dtypes.float16 or embeddings.dtype == tf.dtypes.bfloat16
+    )
+    precise_embeddings = (
+        tf.cast(embeddings, tf.dtypes.float32) if convert_to_float32 else embeddings
+    )
+
     # Reshape label tensor to [batch_size, 1].
     lshape = tf.shape(labels)
     labels = tf.reshape(labels, [lshape[0], 1])
 
-    # Build pairwise squared distance matrix.
-    pdist_matrix = metric_learning.pairwise_distance(embeddings, squared=True)
+    # Build pairwise squared distance matrix
+
+    if distance_metric == "L2":
+        pdist_matrix = metric_learning.pairwise_distance(
+            precise_embeddings, squared=False
+        )
+
+    elif distance_metric == "squared-L2":
+        pdist_matrix = metric_learning.pairwise_distance(
+            precise_embeddings, squared=True
+        )
+
+    elif distance_metric == "angular":
+        pdist_matrix = metric_learning.angular_distance(precise_embeddings)
+
+    else:
+        pdist_matrix = distance_metric(precise_embeddings)
+
     # Build pairwise binary adjacency matrix.
     adjacency = tf.math.equal(labels, tf.transpose(labels))
     # Invert so we can select negatives only.
@@ -144,7 +195,10 @@ def triplet_semihard_loss(
         num_positives,
     )
 
-    return triplet_loss
+    if convert_to_float32:
+        return tf.cast(triplet_loss, embeddings.dtype)
+    else:
+        return triplet_loss
 
 
 @tf.keras.utils.register_keras_serializable(package="Addons")
@@ -154,24 +208,71 @@ def triplet_hard_loss(
     y_pred: TensorLike,
     margin: FloatTensorLike = 1.0,
     soft: bool = False,
+    distance_metric: Union[str, Callable] = "L2",
 ) -> tf.Tensor:
-    """Computes the triplet loss with hard negative and hard positive mining.
+    r"""Computes the triplet loss with hard negative and hard positive mining.
+
+    Usage:
+
+    >>> y_true = tf.convert_to_tensor([0, 0])
+    >>> y_pred = tf.convert_to_tensor([[0.0, 1.0], [1.0, 0.0]])
+    >>> tfa.losses.triplet_hard_loss(y_true, y_pred, distance_metric="L2")
+    <tf.Tensor: shape=(), dtype=float32, numpy=1.0>
+
+    >>> # Calling with callable `distance_metric`
+    >>> distance_metric = lambda x: tf.linalg.matmul(x, x, transpose_b=True)
+    >>> tfa.losses.triplet_hard_loss(y_true, y_pred, distance_metric=distance_metric)
+    <tf.Tensor: shape=(), dtype=float32, numpy=0.0>
 
     Args:
-      y_true: 1-D integer `Tensor` with shape [batch_size] of
+      y_true: 1-D integer `Tensor` with shape `[batch_size]` of
         multiclass integer labels.
       y_pred: 2-D float `Tensor` of embedding vectors. Embeddings should
         be l2 normalized.
       margin: Float, margin term in the loss definition.
       soft: Boolean, if set, use the soft margin version.
+      distance_metric: `str` or a `Callable` that determines distance metric.
+        Valid strings are "L2" for l2-norm distance,
+        "squared-L2" for squared l2-norm distance,
+        and "angular" for cosine similarity.
+
+        A `Callable` should take a batch of embeddings as input and
+        return the pairwise distance matrix.
+
+    Returns:
+      triplet_loss: float scalar with dtype of `y_pred`.
     """
-    labels, embeddings = y_true, y_pred
+    labels = tf.convert_to_tensor(y_true, name="labels")
+    embeddings = tf.convert_to_tensor(y_pred, name="embeddings")
+
+    convert_to_float32 = (
+        embeddings.dtype == tf.dtypes.float16 or embeddings.dtype == tf.dtypes.bfloat16
+    )
+    precise_embeddings = (
+        tf.cast(embeddings, tf.dtypes.float32) if convert_to_float32 else embeddings
+    )
+
     # Reshape label tensor to [batch_size, 1].
     lshape = tf.shape(labels)
     labels = tf.reshape(labels, [lshape[0], 1])
 
     # Build pairwise squared distance matrix.
-    pdist_matrix = metric_learning.pairwise_distance(embeddings, squared=True)
+    if distance_metric == "L2":
+        pdist_matrix = metric_learning.pairwise_distance(
+            precise_embeddings, squared=False
+        )
+
+    elif distance_metric == "squared-L2":
+        pdist_matrix = metric_learning.pairwise_distance(
+            precise_embeddings, squared=True
+        )
+
+    elif distance_metric == "angular":
+        pdist_matrix = metric_learning.angular_distance(precise_embeddings)
+
+    else:
+        pdist_matrix = distance_metric(precise_embeddings)
+
     # Build pairwise binary adjacency matrix.
     adjacency = tf.math.equal(labels, tf.transpose(labels))
     # Invert so we can select negatives only.
@@ -200,11 +301,14 @@ def triplet_hard_loss(
     # Get final mean triplet loss
     triplet_loss = tf.reduce_mean(triplet_loss)
 
-    return triplet_loss
+    if convert_to_float32:
+        return tf.cast(triplet_loss, embeddings.dtype)
+    else:
+        return triplet_loss
 
 
 @tf.keras.utils.register_keras_serializable(package="Addons")
-class TripletSemiHardLoss(tf.keras.losses.Loss):
+class TripletSemiHardLoss(LossFunctionWrapper):
     """Computes the triplet loss with semi-hard negative mining.
 
     The loss encourages the positive distances (between a pair of embeddings
@@ -215,7 +319,7 @@ class TripletSemiHardLoss(tf.keras.losses.Loss):
     See: https://arxiv.org/abs/1503.03832.
 
     We expect labels `y_true` to be provided as 1-D integer `Tensor` with shape
-    [batch_size] of multi-class integer labels. And embeddings `y_pred` must be
+    `[batch_size]` of multi-class integer labels. And embeddings `y_pred` must be
     2-D float `Tensor` of l2 normalized embedding vectors.
 
     Args:
@@ -225,24 +329,23 @@ class TripletSemiHardLoss(tf.keras.losses.Loss):
 
     @typechecked
     def __init__(
-        self, margin: FloatTensorLike = 1.0, name: Optional[str] = None, **kwargs
+        self,
+        margin: FloatTensorLike = 1.0,
+        distance_metric: Union[str, Callable] = "L2",
+        name: Optional[str] = None,
+        **kwargs
     ):
-        super().__init__(name=name, reduction=tf.keras.losses.Reduction.NONE)
-        self.margin = margin
-
-    def call(self, y_true, y_pred):
-        return triplet_semihard_loss(y_true, y_pred, self.margin)
-
-    def get_config(self):
-        config = {
-            "margin": self.margin,
-        }
-        base_config = super().get_config()
-        return {**base_config, **config}
+        super().__init__(
+            triplet_semihard_loss,
+            name=name,
+            reduction=tf.keras.losses.Reduction.NONE,
+            margin=margin,
+            distance_metric=distance_metric,
+        )
 
 
 @tf.keras.utils.register_keras_serializable(package="Addons")
-class TripletHardLoss(tf.keras.losses.Loss):
+class TripletHardLoss(LossFunctionWrapper):
     """Computes the triplet loss with hard negative and hard positive mining.
 
     The loss encourages the maximum positive distance (between a pair of embeddings
@@ -253,7 +356,7 @@ class TripletHardLoss(tf.keras.losses.Loss):
     See: https://arxiv.org/pdf/1703.07737.
 
     We expect labels `y_true` to be provided as 1-D integer `Tensor` with shape
-    [batch_size] of multi-class integer labels. And embeddings `y_pred` must be
+    `[batch_size]` of multi-class integer labels. And embeddings `y_pred` must be
     2-D float `Tensor` of l2 normalized embedding vectors.
 
     Args:
@@ -267,20 +370,15 @@ class TripletHardLoss(tf.keras.losses.Loss):
         self,
         margin: FloatTensorLike = 1.0,
         soft: bool = False,
+        distance_metric: Union[str, Callable] = "L2",
         name: Optional[str] = None,
         **kwargs
     ):
-        super().__init__(name=name, reduction=tf.keras.losses.Reduction.NONE)
-        self.margin = margin
-        self.soft = soft
-
-    def call(self, y_true, y_pred):
-        return triplet_hard_loss(y_true, y_pred, self.margin, self.soft)
-
-    def get_config(self):
-        config = {
-            "margin": self.margin,
-            "soft": self.soft,
-        }
-        base_config = super().get_config()
-        return {**base_config, **config}
+        super().__init__(
+            triplet_hard_loss,
+            name=name,
+            reduction=tf.keras.losses.Reduction.NONE,
+            margin=margin,
+            soft=soft,
+            distance_metric=distance_metric,
+        )

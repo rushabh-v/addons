@@ -16,16 +16,15 @@
 
 import tensorflow as tf
 from typeguard import typechecked
+from typing import Union, List
 
 
 @tf.keras.utils.register_keras_serializable(package="Addons")
 class PoincareNormalize(tf.keras.layers.Layer):
-    """Project into the Poincare ball with norm <= 1.0 - epsilon.
+    """Project into the Poincare ball with `norm <= 1.0 - epsilon`.
 
-    https://en.wikipedia.org/wiki/Poincare_ball_model
-
-    Used in Poincare Embeddings for Learning Hierarchical Representations
-    Maximilian Nickel, Douwe Kiela https://arxiv.org/pdf/1705.08039.pdf
+    See [Poincaré Embeddings for Learning Hierarchical Representations](https://arxiv.org/pdf/1705.08039.pdf),
+    and [wiki](https://en.wikipedia.org/wiki/Poincare_ball_model).
 
     For a 1-D tensor with `axis = 0`, computes
 
@@ -43,7 +42,9 @@ class PoincareNormalize(tf.keras.layers.Layer):
     """
 
     @typechecked
-    def __init__(self, axis: int = 1, epsilon: float = 1e-5, **kwargs):
+    def __init__(
+        self, axis: Union[None, int, List[int]] = 1, epsilon: float = 1e-5, **kwargs
+    ):
         super().__init__(**kwargs)
         self.axis = axis
         self.epsilon = epsilon

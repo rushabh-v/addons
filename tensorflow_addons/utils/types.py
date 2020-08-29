@@ -40,9 +40,16 @@ Initializer = Union[None, dict, str, Callable]
 Regularizer = Union[None, dict, str, Callable]
 Constraint = Union[None, dict, str, Callable]
 Activation = Union[None, str, Callable]
+Optimizer = Union[tf.keras.optimizers.Optimizer, str]
 
 TensorLike = Union[
-    List[Union[Number, list]], tuple, Number, np.ndarray, tf.Tensor, tf.Variable
+    List[Union[Number, list]],
+    tuple,
+    Number,
+    np.ndarray,
+    tf.Tensor,
+    tf.SparseTensor,
+    tf.Variable,
 ]
 FloatTensorLike = Union[tf.Tensor, float, np.float16, np.float32, np.float64]
 AcceptableDTypes = Union[tf.DType, np.dtype, type, int, str, None]
